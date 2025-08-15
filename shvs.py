@@ -26,6 +26,8 @@ def extract_contacts(url):
     return emails, phones
 
 # Запрос целевого адреса
+# Новый запрос пути к словарю
+wordlist = input("Введите путь к словарю для gobuster: ")
 target = input("Введите целевой адрес (домен или IP): ")
 
 # Проверка типа адреса и выполнение соответствующих действий
@@ -51,22 +53,71 @@ else:
     # Запускаем программу gobuster для первоначального и найденных доменов
     print("Запускаем скан gobuster для первоначального и найденных доменов")
     for domain in domains.union({target}):
-        run_gobuster_scan(domain, '/Users/kostenko.evgeny/Desktop/1212/big.txt')
-        subdomains = run_gobuster_subdomains_scan(domain, '/Users/kostenko.evgeny/Desktop/1212/big.txt')
+        run_gobuster_scan(domain, wordlist)
+        subdomains = run_gobuster_subdomains_scan(domain, wordlist)
         if subdomains:
             print(f"Найденные субдомены для {domain}: {subdomains}")
 
-# Сохранение результатов в txt файл
-with open('scan_results.txt', 'w') as f:
-    f.write(f"Результаты сканов для адреса: {target}\n")
-    f.write(f"Найденные телефоны: {phones}\n")
-    f.write(f"Найденные адреса электронной почты: {emails}\n")
-    f.write("Результаты сканов nmap:\n")
+# Сохраняем результаты сканов для всех доменов и субдоменов
+all_results = []
+if re.match(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', target):
+    # IP: только nmap
     nmap_result = subprocess.run(['nmap', "-A", "--script", "vulners", "--script-args", "mincvss=3", target], capture_output=True, text=True)
-    f.write(nmap_result.stdout)
-    f.write("Результаты сканов gobuster:\n")
-    gobuster_result = subprocess.run(['gobuster', 'dir', '-u', target, '-w', '/Users/kostenko.evgeny/Desktop/1212/big.txt', '-t', '50'], capture_output=True, text=True)
-    f.write(gobuster_result.stdout)
-    f.write("Результаты сканов gobuster для субдоменов:\n")
-    gobuster_subdomains_result = subprocess.run(['gobuster', 'fuzz', '-u', f'FUZZ.{target}', '-w', '/Users/kostenko.evgeny/Desktop/1212/big.txt'], capture_output=True, text=True)
-    f.write(gobuster_subdomains_result.stdout)
+    all_results.append({
+        'target': target,
+        'type': 'ip',
+        'nmap': nmap_result.stdout
+    })
+else:
+    # ... существующий код ...
+    all_domains = list(domains.union({target}))
+    all_subdomains = {}
+    for domain in all_domains:
+        nmap_result = subprocess.run(['nmap', "-A", "--script", "vulners", "--script-args", "mincvss=3", domain], capture_output=True, text=True)
+        gobuster_result = subprocess.run(['gobuster', 'dir', '-u', domain, '-w', wordlist, '-t', '50'], capture_output=True, text=True)
+        subdomains = run_gobuster_subdomains_scan(domain, wordlist)
+        all_subdomains[domain] = subdomains
+        all_results.append({
+            'target': domain,
+            'type': 'domain',
+            'nmap': nmap_result.stdout,
+            'gobuster': gobuster_result.stdout,
+            'subdomains': subdomains
+        })
+    # Повторный запуск сканирования для найденных субдоменов (1 уровень)
+    for domain in all_domains:
+        subdomains = all_subdomains.get(domain, [])
+        for sub in subdomains:
+            nmap_result = subprocess.run(['nmap', "-A", "--script", "vulners", "--script-args", "mincvss=3", sub], capture_output=True, text=True)
+            gobuster_result = subprocess.run(['gobuster', 'dir', '-u', sub, '-w', wordlist, '-t', '50'], capture_output=True, text=True)
+            sub_subdomains = run_gobuster_subdomains_scan(sub, wordlist)
+            all_results.append({
+                'target': sub,
+                'type': 'subdomain',
+                'nmap': nmap_result.stdout,
+                'gobuster': gobuster_result.stdout,
+                'subdomains': sub_subdomains
+            })
+# Сохраняем всё в файл
+with open('scan_results.txt', 'w') as f:
+    f.write("==============================\n")
+    f.write(f"SurfaceHarvester Scan Report\n")
+    f.write("==============================\n\n")
+    f.write(f"Исходная цель: {target}\n\n")
+    if not re.match(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', target):
+        f.write(f"[Контакты]\nТелефоны: {phones}\nПочта: {emails}\n\n")
+    for res in all_results:
+        f.write("------------------------------\n")
+        f.write(f"Цель: {res['target']}\nТип: {res['type']}\n")
+        if 'nmap' in res:
+            f.write("[Nmap]\n")
+            f.write(res['nmap'] + "\n")
+        if 'gobuster' in res:
+            f.write("[Gobuster]\n")
+            f.write(res['gobuster'] + "\n")
+        if 'subdomains' in res and res['subdomains']:
+            f.write("[Субдомены]\n")
+            for sub in res['subdomains']:
+                f.write(sub + "\n")
+        f.write("\n")
+    f.write("Конец отчёта\n")
