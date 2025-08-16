@@ -40,7 +40,7 @@ def run_gobuster_scan(target, wordlist):
 # Функция для запуска скана gobuster для субдоменов (dns)
 def run_gobuster_subdomains_scan(target, wordlist):
     try:
-        result = subprocess.run(['gobuster', 'dns', '-d', target, '-w', wordlist], capture_output=True, text=True, check=True)
+        result = subprocess.run(['gobuster', 'dns', '-d', target, '-w', wordlist, '--wildcard'], capture_output=True, text=True, check=True)
         found_subdomains = [line.split()[-1] for line in result.stdout.splitlines() if "Found:" in line]
         return found_subdomains
     except Exception as e:
@@ -77,8 +77,10 @@ async def main():
 
     is_ip = bool(re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', target))
 
+    # Всегда запускаем nmap для исходного target
+    nmap_result = run_nmap_scan(target)
+
     if is_ip:
-        nmap_result = run_nmap_scan(target)
         all_results.append({
             'target': target,
             'type': 'ip',
@@ -93,6 +95,7 @@ async def main():
         domains = set(email.split('@')[1] for email in emails)
         all_domains = list(domains.union({target}))
         for domain in all_domains:
+            # Запускаем nmap для каждого домена
             nmap_result = run_nmap_scan(domain)
             gobuster_result = run_gobuster_scan(domain, wordlist)
             subdomains = run_gobuster_subdomains_scan(domain, wordlist)
@@ -109,6 +112,7 @@ async def main():
         for domain in all_domains:
             subdomains = all_subdomains.get(domain, [])
             for sub in subdomains:
+                # Запускаем nmap для каждого субдомена
                 nmap_result = run_nmap_scan(sub)
                 gobuster_result = run_gobuster_scan(sub, wordlist)
                 sub_subdomains = run_gobuster_subdomains_scan(sub, wordlist)
