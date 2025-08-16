@@ -15,8 +15,11 @@
 sudo apt update
 sudo apt install -y python3 python3-pip
 
-# Установите необходимые Python-библиотеки
-pip3 install aiohttp beautifulsoup4 requests
+# Установите Poetry (современный менеджер зависимостей Python)
+pip install poetry
+
+# Установите зависимости из pyproject.toml
+poetry install
 
 # Установите nmap
 sudo apt install -y nmap
@@ -30,14 +33,18 @@ export PATH=$PATH:$(go env GOPATH)/bin
 ```
 
 ## Быстрый старт
-1. Установите зависимости:
-   - Python 3.8+
-   - aiohttp, beautifulsoup4, requests
-2. Убедитесь, что nmap и gobuster установлены в системе
-3. Запустите скрипт:
+1. Установите зависимости через Poetry:
    ```bash
-   python shvs.py
+   poetry install
    ```
+2. Убедитесь, что nmap и gobuster установлены в системе
+3. Запустите скрипт через Poetry:
+   ```bash
+   poetry run python shvs.py
+   ```
+
+## pyproject.toml
+В корне проекта находится файл `pyproject.toml`, который описывает все Python-зависимости и метаданные проекта. Для установки используйте Poetry (см. выше).
 
 ## context7.json
 В корне проекта находится файл `context7.json`, который содержит правила и исключения для автоматизации рекомендаций и индексации (MCP/Context7).
