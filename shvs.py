@@ -28,24 +28,30 @@ def run_nmap_scan(target):
         return f"[Nmap error for {target}]: {e}\n"
 
 # Функция для запуска скана gobuster (директории)
-def run_gobuster_scan(target, wordlist):
+def run_gobuster_dir(target, wordlist):
     url = target if target.startswith('http') else f"http://{target}"
     try:
-        result = subprocess.run(['gobuster', 'dir', '-u', url, '-w', wordlist, '-t', '50'], capture_output=True, text=True, check=True)
+        result = subprocess.run([
+            'gobuster', 'dir',
+            '-u', url,
+            '-w', wordlist,
+            '-t', '50'
+        ], capture_output=True, text=True, check=True)
         return result.stdout
     except Exception as e:
-        logging.error(f"[Gobuster error for {target}]: {e}")
-        return f"[Gobuster error for {target}]: {e}\n"
+        logging.error(f"[Gobuster dir error for {target}]: {e}")
+        return f"[Gobuster dir error for {target}]: {e}\n"
 
-# Функция для запуска скана gobuster для субдоменов (dns)
-def run_gobuster_subdomains_scan(target, wordlist):
+# Функция для поиска субдоменов с помощью subfinder
+
+def run_subfinder(target):
     try:
-        result = subprocess.run(['gobuster', 'dns', '-d', target, '-w', wordlist, '--wildcard'], capture_output=True, text=True, check=True)
-        found_subdomains = [line.split()[-1] for line in result.stdout.splitlines() if "Found:" in line]
-        return found_subdomains
+        result = subprocess.run(['subfinder', '-d', target, '-silent'], capture_output=True, text=True, check=True)
+        subdomains = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return subdomains
     except Exception as e:
-        logging.error(f"[Gobuster subdomain error for {target}]: {e}")
-        return [f"[Gobuster subdomain error for {target}]: {e}"]
+        logging.error(f"[Subfinder error for {target}]: {e}")
+        return [f"[Subfinder error for {target}]: {e}"]
 
 # Асинхронная функция для извлечения адресов электронной почты и телефонов из веб-страницы
 async def extract_contacts(url):
@@ -61,11 +67,27 @@ async def extract_contacts(url):
         logging.error(f"[Extract contacts error for {url}]: {e}")
         return [], []
 
+def run_gobuster_fuzz(target_url, wordlist):
+    try:
+        result = subprocess.run([
+            'gobuster', 'fuzz',
+            '-u', target_url,
+            '-w', wordlist,
+            '-t', '50'
+        ], capture_output=True, text=True, check=True)
+        return result.stdout
+    except Exception as e:
+        logging.error(f"[Gobuster fuzz error for {target_url}]: {e}")
+        return f"[Gobuster fuzz error for {target_url}]: {e}\n"
+
 async def main():
-    wordlist = input("Введите путь к словарю для gobuster: ")
+    dir_wordlist = input("Введите путь к словарю для gobuster dir: ")
+    fuzz_wordlist = input("Введите путь к словарю для gobuster fuzz: ")
+    wordlist = dir_wordlist  # для обратной совместимости с валидацией
     target = input("Введите целевой адрес (домен или IP): ")
     try:
-        validate_wordlist(wordlist)
+        validate_wordlist(dir_wordlist)
+        validate_wordlist(fuzz_wordlist)
         validate_target(target)
     except Exception as e:
         print(f"Ошибка валидации: {e}")
@@ -73,7 +95,6 @@ async def main():
 
     emails, phones, domains = [], [], set()
     all_results = []
-    all_subdomains = {}
 
     is_ip = bool(re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', target))
 
@@ -94,35 +115,40 @@ async def main():
         print(f"Найденные адреса электронной почты: {emails}")
         domains = set(email.split('@')[1] for email in emails)
         all_domains = list(domains.union({target}))
+        # Запускаем subfinder для исходной цели
+        subfinder_result = run_subfinder(target)
+        all_results.append({
+            'target': target,
+            'type': 'subfinder',
+            'subfinder': subfinder_result
+        })
         for domain in all_domains:
             # Запускаем nmap для каждого домена
             nmap_result = run_nmap_scan(domain)
-            gobuster_result = run_gobuster_scan(domain, wordlist)
-            subdomains = run_gobuster_subdomains_scan(domain, wordlist)
-            all_subdomains[domain] = subdomains
+            print(f"[INFO] Используется словарь для gobuster dir: {dir_wordlist}")
+            gobuster_dir_result = run_gobuster_dir(domain, dir_wordlist)
+            # Ищем потенциальные точки для фаззинга
+            fuzz_results = []
+            for line in gobuster_dir_result.splitlines():
+                if '?' in line and '=' in line:
+                    path = line.split()[0] if line.split() else line
+                    if '=' in path:
+                        param_path = path.split('=')[0] + '=FUZZ'
+                        base_url = domain if domain.startswith('http') else f'http://{domain}'
+                        fuzz_url = base_url.rstrip('/') + param_path
+                        print(f"[INFO] Используется словарь для gobuster fuzz: {fuzz_wordlist}")
+                        fuzz_output = run_gobuster_fuzz(fuzz_url, fuzz_wordlist)
+                        fuzz_results.append({'url': fuzz_url, 'result': fuzz_output, 'wordlist': fuzz_wordlist})
+            subfinder_result = run_subfinder(domain)
             all_results.append({
                 'target': domain,
                 'type': 'domain',
                 'nmap': nmap_result,
-                'gobuster': gobuster_result,
-                'subdomains': subdomains
+                'gobuster_dir': gobuster_dir_result,
+                'gobuster_dir_wordlist': dir_wordlist,
+                'subfinder': subfinder_result,
+                'fuzz': fuzz_results
             })
-            if subdomains:
-                print(f"Найденные субдомены для {domain}: {subdomains}")
-        for domain in all_domains:
-            subdomains = all_subdomains.get(domain, [])
-            for sub in subdomains:
-                # Запускаем nmap для каждого субдомена
-                nmap_result = run_nmap_scan(sub)
-                gobuster_result = run_gobuster_scan(sub, wordlist)
-                sub_subdomains = run_gobuster_subdomains_scan(sub, wordlist)
-                all_results.append({
-                    'target': sub,
-                    'type': 'subdomain',
-                    'nmap': nmap_result,
-                    'gobuster': gobuster_result,
-                    'subdomains': sub_subdomains
-                })
     try:
         with open('scan_results.txt', 'w', encoding='utf-8') as f:
             f.write("==============================\n")
@@ -137,13 +163,17 @@ async def main():
                 if 'nmap' in res:
                     f.write("[Nmap]\n")
                     f.write(res['nmap'] + "\n")
-                if 'gobuster' in res:
-                    f.write("[Gobuster]\n")
-                    f.write(res['gobuster'] + "\n")
-                if 'subdomains' in res and res['subdomains']:
-                    f.write("[Субдомены]\n")
-                    for sub in res['subdomains']:
+                if 'gobuster_dir' in res:
+                    f.write(f"[Gobuster Dir] (словарь: {res.get('gobuster_dir_wordlist','')})\n")
+                    f.write(res['gobuster_dir'] + "\n")
+                if 'subfinder' in res and res['subfinder']:
+                    f.write("[Subfinder]\n")
+                    for sub in res['subfinder']:
                         f.write(sub + "\n")
+                if 'fuzz' in res and res['fuzz']:
+                    for fuzz in res['fuzz']:
+                        f.write(f"[Gobuster Fuzz] {fuzz['url']} (словарь: {fuzz['wordlist']})\n")
+                        f.write(fuzz['result'] + "\n")
                 f.write("\n")
             f.write("Конец отчёта\n")
         print("Результаты сохранены в scan_results.txt")
