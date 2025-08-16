@@ -115,13 +115,6 @@ async def main():
         print(f"Найденные адреса электронной почты: {emails}")
         domains = set(email.split('@')[1] for email in emails)
         all_domains = list(domains.union({target}))
-        # Запускаем subfinder для исходной цели
-        subfinder_result = run_subfinder(target)
-        all_results.append({
-            'target': target,
-            'type': 'subfinder',
-            'subfinder': subfinder_result
-        })
         for domain in all_domains:
             # Запускаем nmap для каждого домена
             nmap_result = run_nmap_scan(domain)
@@ -139,6 +132,7 @@ async def main():
                         print(f"[INFO] Используется словарь для gobuster fuzz: {fuzz_wordlist}")
                         fuzz_output = run_gobuster_fuzz(fuzz_url, fuzz_wordlist)
                         fuzz_results.append({'url': fuzz_url, 'result': fuzz_output, 'wordlist': fuzz_wordlist})
+            # Запускаем subfinder только один раз для каждой уникальной цели
             subfinder_result = run_subfinder(domain)
             all_results.append({
                 'target': domain,
